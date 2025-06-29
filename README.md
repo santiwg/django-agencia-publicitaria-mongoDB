@@ -43,7 +43,7 @@ Puedes copiar todo este bloque y pegarlo directamente en tu archivo requirements
 ```txt
 # requirements.txt
 Django
-psycopg[binary]  # Driver para PostgreSQL
+djongo
 ```
 ---
 ## 3. Creación del Dockerfile
@@ -52,7 +52,7 @@ El `Dockerfile` define la imagen de Docker que contendrá tu aplicación. Aquí 
 > **Puedes copiar todo este bloque y pegarlo directamente en tu archivo Dockerfile.**
 ```dockerfile
 # Etapa de construcción
-FROM python:3.13-alpine AS base
+FROM python:3.10-alpine AS base
 LABEL maintainer="Santiago Wursten Gill <santiwgwuri@gmail.com>, Imanol Barrionuevo <barrionuevoimanol@gmail.com>"
 LABEL version="1.0"
 LABEL description="cloudset"
@@ -83,7 +83,7 @@ WORKDIR /code
 COPY ./requirements.txt .
 RUN pip install -r requirements.txt \
   && rm requirements.txt
-COPY --chown=user:group --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.12/site-packages 
+COPY --chown=user:group --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
 #COPY --from=build-python /usr/local/bin/ /usr/local/bin/
 ENV PATH /usr/local/lib/python3.13/site-packages:$PATH
 # Configuración adicional
@@ -102,15 +102,10 @@ Crea un archivo `.env.db` para almacenar las variables de entorno necesarias par
 ```conf
 # .env.db
 # .env.db
-DATABASE_ENGINE=django.db.backends.postgresql
-POSTGRES_HOST=db
-POSTGRES_PORT=5432
-POSTGRES_DB=postgres
-POSTGRES_USER=postgres
-PGUSER=${POSTGRES_USER}
-POSTGRES_PASSWORD=postgres
-LANG=es_AR.utf8
-POSTGRES_INITDB_ARGS="--locale-provider=icu --icu-locale=es-AR --auth-local=trust"
+DATABASE_ENGINE=djongo
+MONGO_HOST=mongo
+MONGO_PORT=27017
+MONGO_DB=agencia_db
 ```
 
 ---
@@ -120,21 +115,28 @@ El archivo `docker-compose.yml` orquesta los servicios necesarios: base de datos
 > **Puedes copiar todo este bloque y pegarlo directamente en tu archivo docker-compose.yml.**
 ```yml
 services:
-  db:
-    image: postgres:alpine
+  mongo:
+    image: mongo:7.0
+    container_name: mongo
     env_file:
       - .env.db
-    environment:
-      - POSTGRES_INITDB_ARGS=--auth-host=md5 --auth-local=trust
-    healthcheck:
-      test: [ "CMD-SHELL", "pg_isready" ]
-      interval: 10s
-      timeout: 2s
-      retries: 5
-    volumes:
-      - postgres-db:/var/lib/postgresql/data
     ports:
-      - 6432:5432
+      - 27017:27017
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - net
+
+  mongo-express:
+    image: mongo-express
+    container_name: mongo-express
+    ports:
+      - 8081:8081
+    environment:
+      - ME_CONFIG_MONGODB_SERVER=mongo
+      - ME_CONFIG_MONGODB_PORT=27017
+    depends_on:
+      - mongo
     networks:
       - net
 
@@ -151,20 +153,18 @@ services:
     volumes:
       - ./src:/code
     depends_on:
-      db:
-        condition: service_healthy
+      - mongo
     networks:
       - net
 
   generate:
     build: .
     user: root
-    command: /bin/sh -c 'mkdir src && django-admin startproject app src'
+    command: /bin/sh -c 'mkdir -p src && django-admin startproject app src'
     env_file:
       - .env.db
     depends_on:
-      db:
-        condition: service_healthy
+      - mongo
     volumes:
       - .:/code
     networks:
@@ -178,8 +178,7 @@ services:
     volumes:
       - ./src:/code
     depends_on:
-      db:
-        condition: service_healthy
+      - mongo
     networks:
       - net
 
@@ -187,7 +186,7 @@ networks:
   net:
 
 volumes:
-  postgres-db:
+  mongo-data:
 ```
 
 ---
@@ -209,27 +208,25 @@ Edita el archivo `settings.py` para agregar tu app y configurar la base de datos
 > **Puedes copiar todo este bloque y pegarlo al final directamente en tu archivo ./src/app/settings.py.**
 ```python
 import os
+
 ALLOWED_HOSTS = [os.environ.get("ALLOWED_HOSTS", "*")]
+
 INSTALLED_APPS += [
-    'agencia',  # Agrega tu app aquí
+    'agencia',  # tu app
 ]
-# Configuración de la base de datos
-DATABASE_ENGINE = os.environ.get("DATABASE_ENGINE", "")
-POSTGRES_USER = os.getenv("POSTGRES_USER", "")
-POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "")
-POSTGRES_DB = os.environ.get("POSTGRES_DB", "") or os.getenv("DB_NAME")
-POSTGRES_HOST = os.environ.get("POSTGRES_HOST", "") or os.getenv("DB_HOST")
-POSTGRES_PORT = os.environ.get("POSTGRES_PORT", "") or os.getenv("DB_PORT")
+
 DATABASES = {
     "default": {
-        "ENGINE": DATABASE_ENGINE,
-        "NAME": POSTGRES_DB,
-        "USER": POSTGRES_USER,
-        "PASSWORD": POSTGRES_PASSWORD,
-        "HOST": POSTGRES_HOST,
-        "PORT": POSTGRES_PORT,
+        "ENGINE": os.environ.get("DATABASE_ENGINE", "djongo"),
+        "NAME": os.environ.get("MONGO_DB", "agencia_db"),
+        "ENFORCE_SCHEMA": False,  # evita errores si los modelos no coinciden 100% con la base
+        "CLIENT": {
+            "host": os.environ.get("MONGO_HOST", "mongo"),
+            "port": int(os.environ.get("MONGO_PORT", 27017)),
+        },
     }
 }
+
 ```
 
 ---
@@ -303,6 +300,7 @@ from django.db import models
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.contrib.auth.models import User
+from django.core.exceptions import ValidationError
 
 class TopicoPagina(models.Model):
     nombre = models.CharField(
@@ -315,11 +313,15 @@ class TopicoPagina(models.Model):
         _('Descripción'),
         help_text=_('Descripción del tópico de página'),
         max_length=150,
-        blank=True,
-        null=True
+        blank=True
     )
     def __str__(self) -> str:
         return f'{self.nombre}'
+
+    def delete(self, *args, **kwargs):
+        if self.paginas.exists():
+            raise ValidationError("No se puede eliminar un tópico con páginas asociadas.")
+        super().delete(*args, **kwargs)
 
     class Meta:
         ordering = ['nombre']
@@ -338,11 +340,15 @@ class Categoria(models.Model):
         _('Descripción'),
         help_text=_('Descripción de la categoría de anuncios'),
         max_length=150,
-        blank=True,
-        null=True
+        blank=True
     )
     def __str__(self):
         return f'{self.nombre}'
+
+    def delete(self, *args, **kwargs):
+        if self.anuncios.exists():
+            raise ValidationError("No se puede eliminar una categoría con anuncios asociados.")
+        super().delete(*args, **kwargs)
 
     class Meta:
         verbose_name = _('Categoría')
@@ -361,11 +367,15 @@ class TipoAnuncio(models.Model):
         _('Descripción'),
         help_text=_('Descripción del tipo de anuncios'),
         max_length=150,
-        blank=True,
-        null=True
+        blank=True
     )
     def __str__(self):
         return f'{self.nombre}'
+
+    def delete(self, *args, **kwargs):
+        if self.anuncios.exists():
+            raise ValidationError("No se puede eliminar un tipo de anuncio con anuncios asociados.")
+        super().delete(*args, **kwargs)
 
     class Meta:
         verbose_name = _('Tipo de Anuncio')
@@ -394,12 +404,17 @@ class Campania(models.Model):
     )
     def __str__(self):
         return self.nombre
+
+    def delete(self, *args, **kwargs):
+        if self.anuncios.exists():
+            raise ValidationError("No se puede eliminar una campaña con anuncios asociados.")
+        super().delete(*args, **kwargs)
+    
     class Meta:
         verbose_name = _('Campaña')
         verbose_name_plural = _('Campañas')
         ordering=['nombre']
     def clean(self):
-        from django.core.exceptions import ValidationError
         if self.fecha_fin and self.fecha_fin <= self.fecha_inicio:
             raise ValidationError(_('La fecha de fin debe ser posterior a la fecha de inicio'))
 
@@ -414,8 +429,7 @@ class Anuncio(models.Model):
         TipoAnuncio,
         verbose_name=_('Tipo'),
         help_text=_('Tipo de anuncio'),
-        related_name='anuncios',
-        on_delete=models.PROTECT,
+        related_name='anuncios'
     )
     titulo = models.CharField(
         _('Título'),
@@ -430,25 +444,26 @@ class Anuncio(models.Model):
         Campania,
         verbose_name=_('Campaña'),
         help_text=_('Campaña donde aparece el anuncio'),
-        related_name='anuncios',
-        on_delete=models.PROTECT
+        related_name='anuncios'
     )
     categoria = models.ForeignKey(
         Categoria,
         verbose_name=_('Categoría'),
         help_text=_('Categoría del anuncio'),
-        related_name='anuncios',
-        on_delete=models.PROTECT,
+        related_name='anuncios'
     )
-    precio = models.DecimalField(
+    precio = models.FloatField(
         _('Precio'),
-        max_digits=10,
-        decimal_places=2,
         help_text=_('Precio del anuncio')
     )
 
     def __str__(self):
         return f'{self.nombre} - {self.titulo}'
+
+    def delete(self, *args, **kwargs):
+      if self.apariciones.exists() or self.contrataciones.exists():
+          raise ValidationError("No se puede eliminar un anuncio con apariciones o contrataciones asociadas.")
+      super().delete(*args, **kwargs)
 
     class Meta:
         verbose_name = _('Anuncio')
@@ -469,11 +484,15 @@ class PaginaWeb(models.Model):
         TopicoPagina,
         verbose_name=_('Tópico'),
         help_text=_('Tópico de la página web'),
-        related_name='paginas',
-        on_delete=models.PROTECT,
+        related_name='paginas'
     )
     def __str__(self):
         return self.nombre
+
+    def delete(self, *args, **kwargs):
+      if self.apariciones.exists():
+          raise ValidationError("No se puede eliminar una página web con apariciones asociadas.")
+      super().delete(*args, **kwargs)
 
     class Meta:
         verbose_name = _('Página Web')
@@ -485,15 +504,13 @@ class AparicionAnuncioPagina(models.Model):
         Anuncio,
         verbose_name=_('Anuncio'),
         help_text=_('Anuncio que aparece en la página'),
-        related_name='apariciones',
-        on_delete=models.PROTECT
+        related_name='apariciones'
     )
     pagina_web=models.ForeignKey(
         PaginaWeb,
         verbose_name='Página Web',
         help_text='Página web',
-        related_name='apariciones',
-        on_delete=models.PROTECT
+        related_name='apariciones'
     )
     fecha_inicio_aparicion = models.DateTimeField(
         _('Fecha de Inicio'),
@@ -534,27 +551,29 @@ class Cliente(models.Model):
         _('Dirección Postal'),
         max_length=100,
         blank=True,
-        null=True,
         help_text=_('Dirección postal del cliente')
     )
     numero_telefono = models.CharField(
         _('Número de Teléfono'),
         max_length=30,
         blank=True,
-        null=True,
         help_text=_('Número de teléfono del cliente')
     )
     correo = models.EmailField(
         _('Correo Electrónico'),
         max_length=100,
         blank=True,
-        null=True,
         help_text=_('Correo electrónico del cliente')
     )
 
     def __str__(self):
         return f'{self.nombre} {self.apellido}'
 
+    def delete(self, *args, **kwargs):
+        if self.contrataciones.exists():
+            raise ValidationError("No se puede eliminar un cliente con contrataciones asociadas.")
+        super().delete(*args, **kwargs)
+    
     class Meta:
         verbose_name = _('Cliente')
         verbose_name_plural = _('Clientes')
@@ -570,20 +589,16 @@ class ContratacionAnuncio(models.Model):
         Anuncio,
         verbose_name=_('Anuncio'),
         help_text=_('Anuncio contratado'),
-        related_name='contrataciones',
-        on_delete=models.PROTECT
+        related_name='contrataciones'
     )
     cliente= models.ForeignKey(
         Cliente,
         verbose_name=_('Cliente'),
         help_text=_('Cliente que contrata el anuncio'),
-        related_name='contrataciones',
-        on_delete=models.PROTECT
+        related_name='contrataciones'
     )
-    precio = models.DecimalField(
+    precio = models.FloatField(
         _('Precio'),
-        max_digits=10,
-        decimal_places=2,
         help_text=_('Precio de la contratación')
     )
 
@@ -668,8 +683,11 @@ class PaginaWebAdmin(admin.ModelAdmin):
 
 @admin.register(Anuncio)
 class AnuncioAdmin(admin.ModelAdmin):
-    list_display = ('nombre', 'titulo', 'tipo', 'categoria', 'precio', 'campania')
-    list_filter = ('tipo', 'categoria', 'campania','precio')
+    list_display = ('nombre', 'titulo', 'tipo', 'categoria', 'precio_formateado', 'campania')
+    list_filter = ('tipo', 'categoria', 'campania','precio_formateado')
+    def precio_formateado(self, obj):
+        return f"${round(obj.precio, 2):.2f}"
+    precio_formateado.short_description = "Precio"
     search_fields = ['nombre', 'titulo', 'contenido','campania__nombre']
     ordering = ['nombre']
     inlines = [AparicionAnuncioPaginaInline]
@@ -680,8 +698,11 @@ class AnuncioAdmin(admin.ModelAdmin):
 
 @admin.register(ContratacionAnuncio)
 class ContratacionAnuncioAdmin(admin.ModelAdmin):
-    list_display = ('cliente', 'anuncio', 'fecha_contratacion', 'precio')
+    list_display = ('cliente', 'anuncio', 'fecha_contratacion', 'precio_formateado')
     list_filter = ('fecha_contratacion', 'anuncio__campania')
+    def precio_formateado(self, obj):
+        return f"${round(obj.precio, 2):.2f}"
+    precio_formateado.short_description = "Precio"
     search_fields = ['cliente__nombre', 'cliente__apellido', 'anuncio__nombre']
     date_hierarchy = 'fecha_contratacion'
     ordering = ['-fecha_contratacion']

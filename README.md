@@ -42,8 +42,10 @@ Crea un archivo requirements.txt para listar las dependencias de Python necesari
 Puedes copiar todo este bloque y pegarlo directamente en tu archivo requirements.txt.
 ```txt
 # requirements.txt
-Django
-djongo
+Django==3.2.24
+djongo==1.3.6
+sqlparse==0.2.4
+pymongo==3.12.3
 ```
 ---
 ## 3. Creación del Dockerfile
@@ -51,45 +53,39 @@ El `Dockerfile` define la imagen de Docker que contendrá tu aplicación. Aquí 
 
 > **Puedes copiar todo este bloque y pegarlo directamente en tu archivo Dockerfile.**
 ```dockerfile
-# Etapa de construcción
 FROM python:3.10-alpine AS base
 LABEL maintainer="Santiago Wursten Gill <santiwgwuri@gmail.com>, Imanol Barrionuevo <barrionuevoimanol@gmail.com>"
 LABEL version="1.0"
 LABEL description="cloudset"
 RUN apk --no-cache add bash pango ttf-freefont py3-pip curl
 
-# Etapa de construcción
 FROM base AS builder
-# Instalación de dependencias de construcción
 RUN apk --no-cache add py3-pip py3-pillow py3-brotli py3-scipy py3-cffi \
   linux-headers autoconf automake libtool gcc cmake python3-dev \
   fortify-headers binutils libffi-dev wget openssl-dev libc-dev \
   g++ make musl-dev pkgconf libpng-dev openblas-dev build-base \
   font-noto terminus-font libffi
 
-# Copia solo los archivos necesarios para instalar dependencias de Python
 COPY ./requirements.txt .
-
-# Instalación de dependencias de Python
 RUN pip install --upgrade pip \
   && pip install --no-cache-dir -r requirements.txt \
   && rm requirements.txt
 
-# Etapa de producción
 FROM base
 RUN mkdir /code
 WORKDIR /code
-# Copia solo los archivos necesarios desde la etapa de construcción
 COPY ./requirements.txt .
 RUN pip install -r requirements.txt \
   && rm requirements.txt
-COPY --chown=user:group --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
-#COPY --from=build-python /usr/local/bin/ /usr/local/bin/
-ENV PATH /usr/local/lib/python3.13/site-packages:$PATH
-# Configuración adicional
-RUN ln -s /usr/share/zoneinfo/America/Cordoba /etc/localtime
 
-# Comando predeterminado
+# Copia tanto los paquetes de Python como los binarios instalados (¡IMPORTANTE!)
+COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
+COPY --from=builder /usr/local/bin/ /usr/local/bin/
+
+# Asegúrate de que el PATH incluya /usr/local/bin/
+ENV PATH="/usr/local/bin:${PATH}"
+
+RUN ln -s /usr/share/zoneinfo/America/Cordoba /etc/localtime
 CMD ["gunicorn", "--bind", ":8000", "--workers", "3", "app.wsgi"]
 
 ```
@@ -101,11 +97,12 @@ Crea un archivo `.env.db` para almacenar las variables de entorno necesarias par
 > **Puedes copiar todo este bloque y pegarlo directamente en tu archivo .env.db.**
 ```conf
 # .env.db
-# .env.db
 DATABASE_ENGINE=djongo
 MONGO_HOST=mongo
 MONGO_PORT=27017
 MONGO_DB=agencia_db
+MONGO_INITDB_ROOT_USERNAME=root
+MONGO_INITDB_ROOT_PASSWORD=1234
 ```
 
 ---
@@ -135,6 +132,8 @@ services:
     environment:
       - ME_CONFIG_MONGODB_SERVER=mongo
       - ME_CONFIG_MONGODB_PORT=27017
+      - ME_CONFIG_MONGODB_ADMINUSERNAME=root
+      - ME_CONFIG_MONGODB_ADMINPASSWORD=1234
     depends_on:
       - mongo
     networks:
@@ -159,16 +158,13 @@ services:
 
   generate:
     build: .
-    user: root
-    command: /bin/sh -c 'mkdir -p src && django-admin startproject app src'
-    env_file:
-      - .env.db
-    depends_on:
-      - mongo
+    command: /bin/sh -c 'mkdir -p src && django-admin startproject app .'
+
     volumes:
-      - .:/code
+      - ./src:/code/src
     networks:
       - net
+
 
   manage:
     build: .
@@ -181,6 +177,7 @@ services:
       - mongo
     networks:
       - net
+    
 
 networks:
   net:
@@ -195,7 +192,7 @@ volumes:
 ### Generar la estructura base del proyecto y la app
 
 Hay que tener el archivo `LICENSE` para que la generación de a imagen no produzca un error.
-> **Puedes copiar todo este bloque y pegarlo directamente en tu terminal.**
+> **Puedes copiar todo este bloque y pegarlo directamente en tu terminal. El tercer comando no es necesario si no se usa linux**
 ```sh
 docker compose run --rm generate
 docker compose run --rm manage startapp agencia
@@ -212,7 +209,7 @@ import os
 ALLOWED_HOSTS = [os.environ.get("ALLOWED_HOSTS", "*")]
 
 INSTALLED_APPS += [
-    'agencia',  # tu app
+    'agencia',  # tu app aquí, agregada directamente
 ]
 
 DATABASES = {
@@ -223,6 +220,9 @@ DATABASES = {
         "CLIENT": {
             "host": os.environ.get("MONGO_HOST", "mongo"),
             "port": int(os.environ.get("MONGO_PORT", 27017)),
+            "username": os.getenv("MONGO_INITDB_ROOT_USERNAME", "root"),
+            "password": os.getenv("MONGO_INITDB_ROOT_PASSWORD", "1234"),
+            "authSource": "admin"
         },
     }
 }
@@ -429,7 +429,8 @@ class Anuncio(models.Model):
         TipoAnuncio,
         verbose_name=_('Tipo'),
         help_text=_('Tipo de anuncio'),
-        related_name='anuncios'
+        related_name='anuncios',
+        on_delete=models.PROTECT
     )
     titulo = models.CharField(
         _('Título'),
@@ -444,13 +445,15 @@ class Anuncio(models.Model):
         Campania,
         verbose_name=_('Campaña'),
         help_text=_('Campaña donde aparece el anuncio'),
-        related_name='anuncios'
+        related_name='anuncios',
+        on_delete=models.PROTECT
     )
     categoria = models.ForeignKey(
         Categoria,
         verbose_name=_('Categoría'),
         help_text=_('Categoría del anuncio'),
-        related_name='anuncios'
+        related_name='anuncios',
+        on_delete=models.PROTECT
     )
     precio = models.FloatField(
         _('Precio'),
@@ -484,7 +487,8 @@ class PaginaWeb(models.Model):
         TopicoPagina,
         verbose_name=_('Tópico'),
         help_text=_('Tópico de la página web'),
-        related_name='paginas'
+        related_name='paginas',
+        on_delete=models.PROTECT
     )
     def __str__(self):
         return self.nombre
@@ -504,13 +508,15 @@ class AparicionAnuncioPagina(models.Model):
         Anuncio,
         verbose_name=_('Anuncio'),
         help_text=_('Anuncio que aparece en la página'),
-        related_name='apariciones'
+        related_name='apariciones',
+        on_delete=models.PROTECT
     )
     pagina_web=models.ForeignKey(
         PaginaWeb,
         verbose_name='Página Web',
         help_text='Página web',
-        related_name='apariciones'
+        related_name='apariciones',
+        on_delete=models.PROTECT
     )
     fecha_inicio_aparicion = models.DateTimeField(
         _('Fecha de Inicio'),
@@ -589,13 +595,15 @@ class ContratacionAnuncio(models.Model):
         Anuncio,
         verbose_name=_('Anuncio'),
         help_text=_('Anuncio contratado'),
-        related_name='contrataciones'
+        related_name='contrataciones',
+        on_delete=models.PROTECT
     )
     cliente= models.ForeignKey(
         Cliente,
         verbose_name=_('Cliente'),
         help_text=_('Cliente que contrata el anuncio'),
-        related_name='contrataciones'
+        related_name='contrataciones',
+        on_delete=models.PROTECT
     )
     precio = models.FloatField(
         _('Precio'),
@@ -660,9 +668,8 @@ class TipoAnuncioAdmin(admin.ModelAdmin):
 
 @admin.register(Campania)
 class CampaniaAdmin(admin.ModelAdmin):
-    list_display = ('nombre','fecha_inicio','fecha_fin')
+    list_display = ['nombre']
     search_fields = ['nombre']
-    date_hierarchy='fecha_inicio'
     ordering=['-fecha_inicio']
     inlines=[AnuncioInline]
 
@@ -684,7 +691,7 @@ class PaginaWebAdmin(admin.ModelAdmin):
 @admin.register(Anuncio)
 class AnuncioAdmin(admin.ModelAdmin):
     list_display = ('nombre', 'titulo', 'tipo', 'categoria', 'precio_formateado', 'campania')
-    list_filter = ('tipo', 'categoria', 'campania','precio_formateado')
+    list_filter = ('tipo', 'categoria', 'campania','precio')
     def precio_formateado(self, obj):
         return f"${round(obj.precio, 2):.2f}"
     precio_formateado.short_description = "Precio"
@@ -699,12 +706,11 @@ class AnuncioAdmin(admin.ModelAdmin):
 @admin.register(ContratacionAnuncio)
 class ContratacionAnuncioAdmin(admin.ModelAdmin):
     list_display = ('cliente', 'anuncio', 'fecha_contratacion', 'precio_formateado')
-    list_filter = ('fecha_contratacion', 'anuncio__campania')
+    list_filter = ['anuncio__campania']
     def precio_formateado(self, obj):
         return f"${round(obj.precio, 2):.2f}"
     precio_formateado.short_description = "Precio"
     search_fields = ['cliente__nombre', 'cliente__apellido', 'anuncio__nombre']
-    date_hierarchy = 'fecha_contratacion'
     ordering = ['-fecha_contratacion']
     save_as=True
 
@@ -712,9 +718,8 @@ class ContratacionAnuncioAdmin(admin.ModelAdmin):
 @admin.register(AparicionAnuncioPagina)
 class AparicionAnuncioPaginaAdmin(admin.ModelAdmin):
     list_display = ('anuncio', 'pagina_web', 'fecha_inicio_aparicion', 'fecha_fin_aparicion')
-    list_filter = ('pagina_web', 'fecha_inicio_aparicion')
+    list_filter = ['pagina_web']
     search_fields = ['anuncio__nombre', 'pagina_web__nombre']
-    date_hierarchy = 'fecha_inicio_aparicion'
     ordering = ['-fecha_inicio_aparicion']
     save_as=True
 ```

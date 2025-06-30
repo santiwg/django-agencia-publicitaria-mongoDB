@@ -158,7 +158,7 @@ services:
 
   generate:
     build: .
-    command: /bin/sh -c 'mkdir -p src && django-admin startproject app .'
+    command: /bin/sh -c 'mkdir -p src && django-admin startproject app src'
 
     volumes:
       - .:/code

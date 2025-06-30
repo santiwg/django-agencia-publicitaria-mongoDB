@@ -1,0 +1,73 @@
+services:
+  mongo:
+    image: mongo:7.0
+    container_name: mongo
+    env_file:
+      - .env.db
+    ports:
+      - 27017:27017
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - net
+
+  mongo-express:
+    image: mongo-express
+    container_name: mongo-express
+    ports:
+      - 8081:8081
+    environment:
+      - ME_CONFIG_MONGODB_SERVER=mongo
+      - ME_CONFIG_MONGODB_PORT=27017
+      - ME_CONFIG_MONGODB_ADMINUSERNAME=root
+      - ME_CONFIG_MONGODB_ADMINPASSWORD=1234
+    depends_on:
+      - mongo
+    networks:
+      - net
+
+  backend:
+    build: .
+    command: runserver 0.0.0.0:8000
+    entrypoint: python3 manage.py
+    env_file:
+      - .env.db
+    expose:
+      - "8000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src:/code
+    depends_on:
+      - mongo
+    networks:
+      - net
+
+  generate:
+    build: .
+    command: /bin/sh -c 'mkdir -p src && django-admin startproject app .'
+
+    volumes:
+      - ./src:/code/src
+    networks:
+      - net
+
+
+  manage:
+    build: .
+    entrypoint: python3 manage.py
+    env_file:
+      - .env.db
+    volumes:
+      - ./src:/code
+    depends_on:
+      - mongo
+    networks:
+      - net
+    
+
+networks:
+  net:
+
+volumes:
+  mongo-data:

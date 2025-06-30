@@ -1,0 +1,70 @@
+@startuml diagClases
+
+class TopicoPagina {
+    nombre
+    descripcion
+}
+
+class PaginaWeb {
+    nombre
+    url
+    topico: TopicoPagina
+    apariciones: AparicionAnuncioPagina
+}
+
+class Categoria {
+    nombre
+    descripcion
+}
+
+class Campania {
+    nombre
+    anuncio: Anuncio
+    fechaInicio
+    fechaFin
+}
+
+class TipoAnuncio {
+    nombre
+    descripcion
+}
+
+class Anuncio {
+    nombre
+    tipo: TipoAnuncio
+    titulo
+    contenido
+    categoria: Categoria
+    precio
+}
+
+class Cliente {
+    nombre
+    direccionPostal
+    numeroTelefono
+    correo
+    contrataciones: ContratacionAnuncio
+}
+
+class AparicionAnuncioPagina {
+    anuncio: Anuncio
+    fechaInicioAparicion
+    fechaFinAparicion
+}
+
+class ContratacionAnuncio {
+    fechaContratacion
+    anuncio: Anuncio
+    precio
+}
+
+Anuncio "1..*" <-- Campania
+PaginaWeb -> "1" TopicoPagina
+Anuncio --> "1" Categoria
+Anuncio -> "1" TipoAnuncio
+PaginaWeb --> "1..*" AparicionAnuncioPagina
+AparicionAnuncioPagina -> "1" Anuncio
+Cliente --> "1..*" ContratacionAnuncio
+ContratacionAnuncio --> "1" Anuncio
+
+@enduml

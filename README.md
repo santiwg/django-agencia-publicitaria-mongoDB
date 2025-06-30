@@ -161,7 +161,7 @@ services:
     command: /bin/sh -c 'mkdir -p src && django-admin startproject app .'
 
     volumes:
-      - ./src:/code/src
+      - .:/code
     networks:
       - net
 

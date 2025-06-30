@@ -294,8 +294,6 @@ Incluye modelos bien documentados y estructurados para una gestión profesional 
 
 > **Puedes copiar todo este bloque y pegarlo directamente en tu archivo ./src/agencia/models.py.**
 ```python
-from django.db import models
-
 # Create your models here.
 from django.db import models
 from django.utils.translation import gettext_lazy as _

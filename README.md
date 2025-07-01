@@ -316,11 +316,6 @@ class TopicoPagina(models.Model):
     def __str__(self) -> str:
         return f'{self.nombre}'
 
-    def delete(self, *args, **kwargs):
-        if self.paginas.exists():
-            raise ValidationError("No se puede eliminar un tópico con páginas asociadas.")
-        super().delete(*args, **kwargs)
-
     class Meta:
         ordering = ['nombre']
         verbose_name = _('Tópico de Página')
@@ -343,10 +338,6 @@ class Categoria(models.Model):
     def __str__(self):
         return f'{self.nombre}'
 
-    def delete(self, *args, **kwargs):
-        if self.anuncios.exists():
-            raise ValidationError("No se puede eliminar una categoría con anuncios asociados.")
-        super().delete(*args, **kwargs)
 
     class Meta:
         verbose_name = _('Categoría')
@@ -370,10 +361,6 @@ class TipoAnuncio(models.Model):
     def __str__(self):
         return f'{self.nombre}'
 
-    def delete(self, *args, **kwargs):
-        if self.anuncios.exists():
-            raise ValidationError("No se puede eliminar un tipo de anuncio con anuncios asociados.")
-        super().delete(*args, **kwargs)
 
     class Meta:
         verbose_name = _('Tipo de Anuncio')
@@ -403,10 +390,6 @@ class Campania(models.Model):
     def __str__(self):
         return self.nombre
 
-    def delete(self, *args, **kwargs):
-        if self.anuncios.exists():
-            raise ValidationError("No se puede eliminar una campaña con anuncios asociados.")
-        super().delete(*args, **kwargs)
     
     class Meta:
         verbose_name = _('Campaña')
@@ -461,10 +444,6 @@ class Anuncio(models.Model):
     def __str__(self):
         return f'{self.nombre} - {self.titulo}'
 
-    def delete(self, *args, **kwargs):
-      if self.apariciones.exists() or self.contrataciones.exists():
-          raise ValidationError("No se puede eliminar un anuncio con apariciones o contrataciones asociadas.")
-      super().delete(*args, **kwargs)
 
     class Meta:
         verbose_name = _('Anuncio')
@@ -491,10 +470,6 @@ class PaginaWeb(models.Model):
     def __str__(self):
         return self.nombre
 
-    def delete(self, *args, **kwargs):
-      if self.apariciones.exists():
-          raise ValidationError("No se puede eliminar una página web con apariciones asociadas.")
-      super().delete(*args, **kwargs)
 
     class Meta:
         verbose_name = _('Página Web')
@@ -573,10 +548,6 @@ class Cliente(models.Model):
     def __str__(self):
         return f'{self.nombre} {self.apellido}'
 
-    def delete(self, *args, **kwargs):
-        if self.contrataciones.exists():
-            raise ValidationError("No se puede eliminar un cliente con contrataciones asociadas.")
-        super().delete(*args, **kwargs)
     
     class Meta:
         verbose_name = _('Cliente')

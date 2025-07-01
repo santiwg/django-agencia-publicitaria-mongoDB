@@ -70,10 +70,6 @@ class AnuncioAdmin(admin.ModelAdmin):
     ordering = ['nombre']
     inlines = [AparicionAnuncioPaginaInline]
 
-
-
-
-
 @admin.register(ContratacionAnuncio)
 class ContratacionAnuncioAdmin(admin.ModelAdmin):
     list_display = ('cliente', 'anuncio', 'fecha_contratacion', 'precio_formateado')
